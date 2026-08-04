@@ -23,7 +23,7 @@ body {
     radial-gradient(circle at 76% 2%, rgba(199, 102, 69, 0.08), transparent 25rem),
     var(--paper);
   color: var(--ink);
-  font-family: var(--font-geist), Arial, sans-serif;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 button, input, textarea { font: inherit; }

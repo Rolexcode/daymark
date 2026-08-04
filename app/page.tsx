@@ -26,6 +26,8 @@ type DayPlan = {
 type DraftBlock = Omit<TimeBlock, "done">;
 
 const emptyPlan = (): DayPlan => ({ blocks: [], reflection: "", reviewed: false });
+const storageKey = (date: string) => `daymark:v1:plan:${date}`;
+const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 function id() {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -89,11 +91,48 @@ function starterPlan(): DayPlan {
   };
 }
 
+function cleanSubtask(value: unknown): Subtask | null {
+  if (!value || typeof value !== "object") return null;
+  const incoming = value as Partial<Subtask>;
+  const title = typeof incoming.title === "string" ? incoming.title.trim() : "";
+  if (!title) return null;
+
+  return {
+    id: typeof incoming.id === "string" && incoming.id ? incoming.id : id(),
+    title,
+    done: Boolean(incoming.done),
+  };
+}
+
+function cleanBlock(value: unknown): TimeBlock | null {
+  if (!value || typeof value !== "object") return null;
+  const incoming = value as Partial<TimeBlock>;
+  const title = typeof incoming.title === "string" ? incoming.title.trim() : "";
+  const start = typeof incoming.start === "string" ? incoming.start : "";
+  const end = typeof incoming.end === "string" ? incoming.end : "";
+  if (!title || !timePattern.test(start) || !timePattern.test(end) || end <= start) return null;
+
+  const subtasks = Array.isArray(incoming.subtasks)
+    ? incoming.subtasks.map(cleanSubtask).filter((task): task is Subtask => task !== null)
+    : [];
+
+  return {
+    id: typeof incoming.id === "string" && incoming.id ? incoming.id : id(),
+    title,
+    start,
+    end,
+    done: Boolean(incoming.done),
+    subtasks,
+  };
+}
+
 function cleanPlan(value: unknown): DayPlan {
   if (!value || typeof value !== "object") return emptyPlan();
   const incoming = value as Partial<DayPlan>;
   return {
-    blocks: Array.isArray(incoming.blocks) ? incoming.blocks : [],
+    blocks: Array.isArray(incoming.blocks)
+      ? incoming.blocks.map(cleanBlock).filter((block): block is TimeBlock => block !== null)
+      : [],
     reflection: typeof incoming.reflection === "string" ? incoming.reflection : "",
     reviewed: Boolean(incoming.reviewed),
   };
@@ -127,12 +166,7 @@ export default function Home() {
   const persist = useCallback(async (date: string, nextPlan: DayPlan) => {
     setSaveState("saving");
     try {
-      const response = await fetch("/api/plan", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ date, plan: nextPlan }),
-      });
-      if (!response.ok) throw new Error("Could not save plan");
+      window.localStorage.setItem(storageKey(date), JSON.stringify(nextPlan));
       setSaveState("saved");
       return true;
     } catch {
@@ -143,44 +177,25 @@ export default function Home() {
 
   useEffect(() => {
     if (!selectedDate) return;
-    let active = true;
-    const controller = new AbortController();
-
-    async function load() {
-      setIsLoading(true);
-      setLoadedDate("");
-      try {
-        const response = await fetch(`/api/plan?date=${selectedDate}`, {
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error("Could not load plan");
-        const result = (await response.json()) as { plan: DayPlan | null };
-        let nextPlan = result.plan ? cleanPlan(result.plan) : emptyPlan();
-        if (result.plan === null && selectedDate === dayKey(new Date())) {
-          nextPlan = starterPlan();
-          void persist(selectedDate, nextPlan);
-        }
-        if (active) {
-          setPlan(nextPlan);
-          setLoadedDate(selectedDate);
-          setSaveState("saved");
-        }
-      } catch (error) {
-        if (active && !(error instanceof DOMException && error.name === "AbortError")) {
-          setPlan(emptyPlan());
-          setLoadedDate(selectedDate);
-          setSaveState("error");
-        }
-      } finally {
-        if (active) setIsLoading(false);
+    setIsLoading(true);
+    setLoadedDate("");
+    try {
+      const saved = window.localStorage.getItem(storageKey(selectedDate));
+      let nextPlan = saved ? cleanPlan(JSON.parse(saved)) : emptyPlan();
+      if (saved === null && selectedDate === dayKey(new Date())) {
+        nextPlan = starterPlan();
+        void persist(selectedDate, nextPlan);
       }
+      setPlan(nextPlan);
+      setLoadedDate(selectedDate);
+      setSaveState("saved");
+    } catch {
+      setPlan(emptyPlan());
+      setLoadedDate(selectedDate);
+      setSaveState("error");
+    } finally {
+      setIsLoading(false);
     }
-
-    void load();
-    return () => {
-      active = false;
-      controller.abort();
-    };
   }, [persist, selectedDate]);
 
   useEffect(() => {
@@ -339,9 +354,9 @@ export default function Home() {
 
   async function copyToday() {
     try {
-      const response = await fetch(`/api/plan?date=${today}`);
-      const result = (await response.json()) as { plan: DayPlan | null };
-      const source = result.plan?.blocks.length ? cleanPlan(result.plan) : starterPlan();
+      const saved = window.localStorage.getItem(storageKey(today));
+      const storedPlan = saved ? cleanPlan(JSON.parse(saved)) : null;
+      const source = storedPlan?.blocks.length ? storedPlan : starterPlan();
       setPlan({
         reflection: "",
         reviewed: false,
@@ -360,14 +375,14 @@ export default function Home() {
   async function saveReviewAndPlanTomorrow() {
     const reviewedPlan = { ...plan, reviewed: true };
     setPlan(reviewedPlan);
-    await persist(selectedDate, reviewedPlan);
+    const reviewSaved = await persist(selectedDate, reviewedPlan);
+    if (!reviewSaved) return;
     const nextDate = moveDate(selectedDate, 1);
 
     if (carryUnfinished) {
       try {
-        const response = await fetch(`/api/plan?date=${nextDate}`);
-        const result = (await response.json()) as { plan: DayPlan | null };
-        if (result.plan === null) {
+        const savedNextPlan = window.localStorage.getItem(storageKey(nextDate));
+        if (savedNextPlan === null) {
           const unfinished = plan.blocks
             .filter((block) => !block.done)
             .map((block) => ({
@@ -377,7 +392,12 @@ export default function Home() {
               subtasks: block.subtasks.map((task) => ({ ...task, id: id(), done: false })),
             }));
           if (unfinished.length) {
-            await persist(nextDate, { blocks: unfinished, reflection: "", reviewed: false });
+            const tomorrowSaved = await persist(nextDate, {
+              blocks: unfinished,
+              reflection: "",
+              reviewed: false,
+            });
+            if (!tomorrowSaved) return;
           }
         }
       } catch {
@@ -386,7 +406,7 @@ export default function Home() {
     }
 
     setReviewOpen(false);
-    navigate(nextDate);
+    setSelectedDate(nextDate);
   }
 
   if (!selectedDate) {

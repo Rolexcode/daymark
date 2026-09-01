@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import LockInApp from "./LockInApp";
 
 type Subtask = {
   id: string;
@@ -138,7 +139,7 @@ function cleanPlan(value: unknown): DayPlan {
   };
 }
 
-export default function Home() {
+function PlannerView({ onOpenLockIn }: { onOpenLockIn: () => void }) {
   const [selectedDate, setSelectedDate] = useState("");
   const [plan, setPlan] = useState<DayPlan>(emptyPlan);
   const [loadedDate, setLoadedDate] = useState("");
@@ -427,6 +428,9 @@ export default function Home() {
           <span aria-hidden="true" />
           {saveState === "saving" ? "Saving" : saveState === "error" ? "Save issue" : "Saved"}
         </div>
+        <button className="planner-lockin-link" type="button" onClick={onOpenLockIn}>
+          Lock-in
+        </button>
         <button className="plan-tomorrow" onClick={() => navigate(moveDate(selectedDate, 1))}>
           Plan next day <span aria-hidden="true">→</span>
         </button>
@@ -698,5 +702,38 @@ export default function Home() {
         </div>
       )}
     </main>
+  );
+}
+
+type AppView = "lock-in" | "planner";
+
+function viewFromUrl(): AppView {
+  if (typeof window === "undefined") return "lock-in";
+  return new URLSearchParams(window.location.search).get("view") === "planner"
+    ? "planner"
+    : "lock-in";
+}
+
+export default function Home() {
+  const [view, setView] = useState<AppView>(viewFromUrl);
+
+  useEffect(() => {
+    const syncView = () => setView(viewFromUrl());
+    window.addEventListener("popstate", syncView);
+    return () => window.removeEventListener("popstate", syncView);
+  }, []);
+
+  function openView(nextView: AppView) {
+    const url = new URL(window.location.href);
+    if (nextView === "planner") url.searchParams.set("view", "planner");
+    else url.searchParams.delete("view");
+    window.history.pushState({}, "", url);
+    setView(nextView);
+  }
+
+  return view === "planner" ? (
+    <PlannerView onOpenLockIn={() => openView("lock-in")} />
+  ) : (
+    <LockInApp onOpenPlanner={() => openView("planner")} />
   );
 }

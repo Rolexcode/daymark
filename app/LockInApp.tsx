@@ -130,7 +130,7 @@ export default function LockInApp({ onOpenPlanner }: LockInAppProps) {
   const [calendarMessage, setCalendarMessage] = useState("");
 
   const setupOpen = state.habits.length === 0 || editingSetup;
-  const hasStarted = today >= LOCK_IN_START_DATE;
+  const habitListLocked = today > LOCK_IN_START_DATE;
   const selectedEntry = dayEntry(state, selectedDate);
   const selectedStats = calculateDayStats(state, selectedDate);
   const overallStats = calculateLockInStats(state, today);
@@ -183,7 +183,7 @@ export default function LockInApp({ onOpenPlanner }: LockInAppProps) {
       return;
     }
 
-    if (hasStarted && state.habits.length > 0 && activeDrafts.length !== state.habits.length) {
+    if (habitListLocked && state.habits.length > 0 && activeDrafts.length !== state.habits.length) {
       setSetupError("After September 1, keep the same habits so your history stays accurate.");
       return;
     }
